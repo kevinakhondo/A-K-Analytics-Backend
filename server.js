@@ -6,7 +6,7 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors({ origin: 'https://akanalytics.com' })); // Restrict to your frontend domain
+app.use(cors()); // Allow all origins for testing
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -23,7 +23,7 @@ const ReviewSchema = new mongoose.Schema({
 });
 const Review = mongoose.model('Review', ReviewSchema);
 
-// Root route (health check)
+// Root route
 app.get('/', (req, res) => {
     res.json({ status: 'Backend is running', version: '1.0.0' });
 });
@@ -56,7 +56,6 @@ app.get('/api/reviews', async (req, res) => {
 // Get all reviews (admin)
 app.get('/api/reviews/all', async (req, res) => {
     try {
-        // Add authentication in production
         const reviews = await Review.find().sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
@@ -67,7 +66,6 @@ app.get('/api/reviews/all', async (req, res) => {
 // Update review approval (admin)
 app.patch('/api/reviews/:id', async (req, res) => {
     try {
-        // Add authentication in production
         const { approved } = req.body;
         await Review.findByIdAndUpdate(req.params.id, { approved });
         res.json({ message: 'Review updated' });
