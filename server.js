@@ -4,16 +4,13 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const app = express();
 
-// Middleware
 app.use(express.json());
 app.use(cors());
 
-// MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Review schema
 const ReviewSchema = new mongoose.Schema({
     name: { type: String, required: true },
     text: { type: String, required: true },
@@ -23,7 +20,6 @@ const ReviewSchema = new mongoose.Schema({
 });
 const Review = mongoose.model('Review', ReviewSchema);
 
-// Submit a review
 app.post('/api/reviews', async (req, res) => {
     try {
         const { name, text, rating } = req.body;
@@ -38,7 +34,6 @@ app.post('/api/reviews', async (req, res) => {
     }
 });
 
-// Get approved reviews
 app.get('/api/reviews', async (req, res) => {
     try {
         const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
@@ -48,6 +43,5 @@ app.get('/api/reviews', async (req, res) => {
     }
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
