@@ -39,6 +39,7 @@ app.post('/api/reviews', async (req, res) => {
         await review.save();
         res.status(201).json({ message: 'Review submitted, pending approval' });
     } catch (error) {
+        console.error('Error in POST /api/reviews:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -49,27 +50,39 @@ app.get('/api/reviews', async (req, res) => {
         const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
+        console.error('Error in GET /api/reviews:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
+// Admin authentication middleware
+const adminAuth = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token !== process.env.ADMIN_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+};
+
 // Get all reviews (admin)
-app.get('/api/reviews/all', async (req, res) => {
+app.get('/api/reviews/all', adminAuth, async (req, res) => {
     try {
         const reviews = await Review.find().sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
+        console.error('Error in GET /api/reviews/all:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
 // Update review approval (admin)
-app.patch('/api/reviews/:id', async (req, res) => {
+app.patch('/api/reviews/:id', adminAuth, async (req, res) => {
     try {
         const { approved } = req.body;
         await Review.findByIdAndUpdate(req.params.id, { approved });
         res.json({ message: 'Review updated' });
     } catch (error) {
+        console.error('Error in PATCH /api/reviews/:id:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
