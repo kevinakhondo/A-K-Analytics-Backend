@@ -2,20 +2,21 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
 const app = express();
 
-// Middleware
 app.use(express.json());
 app.use(cors({
-    origin: ['https://your-site.netlify.app', 'https://admin-your-site.netlify.app', 'http://localhost:54282']
-}));// Allow all origins for testing
+    origin: ['https://akaana.netlify.app', 'https://admin-your-site.netlify.app', 'http://localhost:54282']
+}));
 
-// MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Review schema
+// Review Schema
 const ReviewSchema = new mongoose.Schema({
     name: { type: String, required: true },
     text: { type: String, required: true },
@@ -25,12 +26,21 @@ const ReviewSchema = new mongoose.Schema({
 });
 const Review = mongoose.model('Review', ReviewSchema);
 
-// Root route
+// User Schema
+const UserSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+});
+const User = mongoose.model('User', UserSchema);
+
+// Root Route
 app.get('/', (req, res) => {
     res.json({ status: 'Backend is running', version: '1.0.0' });
 });
 
-// Submit a review
+// Review Submission
 app.post('/api/reviews', async (req, res) => {
     try {
         const { name, text, rating } = req.body;
@@ -46,7 +56,7 @@ app.post('/api/reviews', async (req, res) => {
     }
 });
 
-// Get approved reviews
+// Get Approved Reviews
 app.get('/api/reviews', async (req, res) => {
     try {
         const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
@@ -57,7 +67,7 @@ app.get('/api/reviews', async (req, res) => {
     }
 });
 
-// Admin authentication middleware
+// Admin Authentication Middleware
 const adminAuth = (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token !== process.env.ADMIN_TOKEN) {
@@ -66,7 +76,7 @@ const adminAuth = (req, res, next) => {
     next();
 };
 
-// Get all reviews (admin)
+// Get All Reviews (Admin)
 app.get('/api/reviews/all', adminAuth, async (req, res) => {
     try {
         const reviews = await Review.find().sort({ createdAt: -1 });
@@ -77,7 +87,7 @@ app.get('/api/reviews/all', adminAuth, async (req, res) => {
     }
 });
 
-// Update review approval (admin)
+// Update Review Approval (Admin)
 app.patch('/api/reviews/:id', adminAuth, async (req, res) => {
     try {
         const { approved } = req.body;
@@ -89,6 +99,69 @@ app.patch('/api/reviews/:id', adminAuth, async (req, res) => {
     }
 });
 
-// Start server
+// User Signup
+app.post('/api/users/signup', async (req, res) => {
+    try {
+        const { name, email, password } = req.body;
+        if (!name || !email || !password) {
+            return res.status(400).json({ error: 'All fields are required' });
+        }
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ error: 'Email already exists' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = new User({ name, email, password: hashedPassword });
+        await user.save();
+        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.status(201).json({ message: 'User created', token });
+    } catch (error) {
+        console.error('Error in POST /api/users/signup:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// User Login
+app.post('/api/users/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.json({ message: 'Login successful', token });
+    } catch (error) {
+        console.error('Error in POST /api/users/login:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// User Profile (Protected)
+app.get('/api/users/profile', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) {
+            return res.status(401).json({ error: 'No token provided' });
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId).select('-password');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('Error in GET /api/users/profile:', error);
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
