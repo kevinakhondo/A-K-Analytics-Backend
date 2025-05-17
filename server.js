@@ -6,7 +6,9 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors()); // Allow all origins for testing
+app.use(cors({
+    origin: ['https://your-site.netlify.app', 'https://admin-your-site.netlify.app', 'http://localhost:54282']
+}));// Allow all origins for testing
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
