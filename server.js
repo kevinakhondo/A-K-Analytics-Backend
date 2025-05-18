@@ -48,6 +48,41 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
+// Authentication Middleware (for users)
+const authMiddleware = async (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        res.status(401).json({ error: 'Invalid token' });
+    }
+};
+
+// Admin Authentication Middleware
+const adminAuth = async (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    try {
+        if (token === process.env.ADMIN_TOKEN) return next();
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (!user || !user.email.includes('kevinakhondo9@gmail.com')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error('Admin auth middleware error:', error);
+        res.status(401).json({ error: 'Invalid token' });
+    }
+};
+
 // Root Route
 app.get('/', (req, res) => {
     res.json({ status: 'Backend is running', version: '1.0.0' });
@@ -80,22 +115,31 @@ app.get('/api/reviews', async (req, res) => {
     }
 });
 
-// Admin Authentication Middleware
-const adminAuth = async (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'No token provided' });
+// Get User Reviews
+app.get('/api/reviews/user/:name', authMiddleware, async (req, res) => {
     try {
-        if (token === process.env.ADMIN_TOKEN) return next();
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.userId);
-        if (!user || !user.email.includes('kevinakhondo9@gmail.com')) {
-            return res.status(401).json({ error: 'Unauthorized' });
+        const name = req.params.name;
+        if (req.user.name !== name && !req.user.email.includes('kevinakhondo9@gmail.com')) {
+            return res.status(403).json({ error: 'Unauthorized to view these reviews' });
         }
-        next();
+        const reviews = await Review.find({ name }).sort({ createdAt: -1 });
+        res.json(reviews);
     } catch (error) {
-        res.status(401).json({ error: 'Invalid token' });
+        console.error('Error in GET /api/reviews/user/:name:', error);
+        res.status(500).json({ error: 'Server error' });
     }
-};
+});
+
+// Get Pending Reviews Count (Admin)
+app.get('/api/reviews/pending', adminAuth, async (req, res) => {
+    try {
+        const count = await Review.countDocuments({ approved: false });
+        res.json({ count });
+    } catch (error) {
+        console.error('Error in GET /api/reviews/pending:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
 
 // Get All Reviews (Admin)
 app.get('/api/reviews/all', adminAuth, async (req, res) => {
