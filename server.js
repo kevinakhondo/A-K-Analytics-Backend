@@ -48,6 +48,18 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
+// Booking Schema
+const BookingSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    date: { type: String, required: true },
+    time: { type: String, required: true },
+    service: { type: String, required: true },
+    status: { type: String, default: 'pending' },
+    createdAt: { type: Date, default: Date.now }
+});
+const Booking = mongoose.model('Booking', BookingSchema);
+
 // Authentication Middleware (for users)
 const authMiddleware = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
@@ -267,6 +279,62 @@ app.get('/api/users/profile', async (req, res) => {
     } catch (error) {
         console.error('Error in GET /api/users/profile:', error);
         res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
+// Create Booking
+app.post('/api/bookings', async (req, res) => {
+    try {
+        const { name, email, date, time, service, status } = req.body;
+        if (!name || !email || !date || !time || !service) {
+            return res.status(400).json({ error: 'All fields (name, email, date, time, service) are required' });
+        }
+        const booking = new Booking({
+            name,
+            email,
+            date,
+            time,
+            service,
+            status: status || 'pending' // Default to 'pending' if not provided
+        });
+        await booking.save();
+        res.status(201).json({ message: 'Booking created successfully', booking });
+    } catch (error) {
+        console.error('Error in POST /api/bookings:', error);
+        res.status(500).json({ error: 'Failed to create booking: ' + error.message });
+    }
+});
+
+// Get All Bookings (Admin)
+app.get('/api/bookings', adminAuth, async (req, res) => {
+    try {
+        const bookings = await Booking.find().sort({ createdAt: -1 });
+        res.json(bookings);
+    } catch (error) {
+        console.error('Error in GET /api/bookings:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update Booking Status (Admin)
+app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
+    try {
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required' });
+        }
+        const booking = await Booking.findByIdAndUpdate(
+            req.params.id,
+            { status },
+            { new: true }
+        );
+        if (!booking) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        res.json({ message: 'Booking status updated', booking });
+    } catch (error) {
+        console.error('Error in PATCH /api/bookings/:id:', error);
+        res.status(500).json({ error: 'Server error' });
     }
 });
 
