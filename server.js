@@ -8,15 +8,25 @@ const nodemailer = require('nodemailer');
 
 const app = express();
 
+// Middleware
 app.use(express.json());
 app.use(cors({
     origin: 'https://akaana.netlify.app',
     credentials: true
 }));
 
-mongoose.connect(process.env.MONGODB_URI)
+// MongoDB Connection with better error handling
+if (!process.env.MONGODB_URI) {
+    console.error('MONGODB_URI is not defined in environment variables');
+    process.exit(1);
+}
+
+mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('MongoDB connection error:', err));
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        process.exit(1);
+    });
 
 // Nodemailer Configuration
 const transporter = nodemailer.createTransport({
@@ -71,8 +81,8 @@ const authMiddleware = async (req, res, next) => {
         req.user = user;
         next();
     } catch (error) {
-        console.error('Auth middleware error:', error);
-        res.status(401).json({ error: 'Invalid token' });
+        console.error('Auth middleware error:', error.message);
+        res.status(401).json({ error: 'Invalid token: ' + error.message });
     }
 };
 
@@ -81,17 +91,28 @@ const adminAuth = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token provided' });
     try {
-        if (token === process.env.ADMIN_TOKEN) return next();
+        if (token === process.env.ADMIN_TOKEN) {
+            console.log('Admin authenticated via ADMIN_TOKEN');
+            return next();
+        }
+        if (!process.env.JWT_SECRET) {
+            console.error('JWT_SECRET is not defined');
+            return res.status(500).json({ error: 'Server configuration error: JWT_SECRET missing' });
+        }
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findById(decoded.userId);
-        if (!user || !user.email.includes('kevinakhondo9@gmail.com')) {
-            return res.status(401).json({ error: 'Unauthorized' });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        if (!user.email.includes('kevinakhondo9@gmail.com')) {
+            return res.status(403).json({ error: 'Unauthorized: Admin access only' });
         }
         req.user = user;
+        console.log('Admin authenticated via JWT:', user.email);
         next();
     } catch (error) {
-        console.error('Admin auth middleware error:', error);
-        res.status(401).json({ error: 'Invalid token' });
+        console.error('Admin auth middleware error:', error.message);
+        res.status(401).json({ error: 'Invalid token: ' + error.message });
     }
 };
 
@@ -111,8 +132,8 @@ app.post('/api/reviews', async (req, res) => {
         await review.save();
         res.status(201).json({ message: 'Review submitted, pending approval' });
     } catch (error) {
-        console.error('Error in POST /api/reviews:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in POST /api/reviews:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -122,8 +143,8 @@ app.get('/api/reviews', async (req, res) => {
         const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
-        console.error('Error in GET /api/reviews:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in GET /api/reviews:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -137,8 +158,8 @@ app.get('/api/reviews/user/:name', authMiddleware, async (req, res) => {
         const reviews = await Review.find({ name }).sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
-        console.error('Error in GET /api/reviews/user/:name:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in GET /api/reviews/user/:name:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -148,8 +169,8 @@ app.get('/api/reviews/pending', adminAuth, async (req, res) => {
         const count = await Review.countDocuments({ approved: false });
         res.json({ count });
     } catch (error) {
-        console.error('Error in GET /api/reviews/pending:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in GET /api/reviews/pending:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -159,8 +180,8 @@ app.get('/api/reviews/all', adminAuth, async (req, res) => {
         const reviews = await Review.find().sort({ createdAt: -1 });
         res.json(reviews);
     } catch (error) {
-        console.error('Error in GET /api/reviews/all:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in GET /api/reviews/all:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -168,11 +189,14 @@ app.get('/api/reviews/all', adminAuth, async (req, res) => {
 app.patch('/api/reviews/:id', adminAuth, async (req, res) => {
     try {
         const { approved } = req.body;
-        await Review.findByIdAndUpdate(req.params.id, { approved });
-        res.json({ message: 'Review updated' });
+        const review = await Review.findByIdAndUpdate(req.params.id, { approved }, { new: true });
+        if (!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+        res.json({ message: 'Review updated', review });
     } catch (error) {
-        console.error('Error in PATCH /api/reviews/:id:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in PATCH /api/reviews/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -212,8 +236,8 @@ app.post('/api/users/signup', async (req, res) => {
 
         res.status(201).json({ message: 'User created. Please check your email to verify your account.' });
     } catch (error) {
-        console.error('Error in POST /api/users/signup:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in POST /api/users/signup:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -232,8 +256,8 @@ app.get('/api/users/verify/:token', async (req, res) => {
         const authToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.json({ message: 'Email verified successfully', token: authToken });
     } catch (error) {
-        console.error('Error in GET /api/users/verify/:token:', error);
-        res.status(400).json({ error: 'Invalid or expired verification token' });
+        console.error('Error in GET /api/users/verify/:token:', error.message);
+        res.status(400).json({ error: 'Invalid or expired verification token: ' + error.message });
     }
 });
 
@@ -258,8 +282,8 @@ app.post('/api/users/login', async (req, res) => {
         const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.json({ message: 'Login successful', token });
     } catch (error) {
-        console.error('Error in POST /api/users/login:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in POST /api/users/login:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
@@ -277,8 +301,8 @@ app.get('/api/users/profile', async (req, res) => {
         }
         res.json(user);
     } catch (error) {
-        console.error('Error in GET /api/users/profile:', error);
-        res.status(401).json({ error: 'Invalid token' });
+        console.error('Error in GET /api/users/profile:', error.message);
+        res.status(401).json({ error: 'Invalid token: ' + error.message });
     }
 });
 
@@ -295,12 +319,12 @@ app.post('/api/bookings', async (req, res) => {
             date,
             time,
             service,
-            status: status || 'pending' // Default to 'pending' if not provided
+            status: status || 'pending'
         });
         await booking.save();
         res.status(201).json({ message: 'Booking created successfully', booking });
     } catch (error) {
-        console.error('Error in POST /api/bookings:', error);
+        console.error('Error in POST /api/bookings:', error.message);
         res.status(500).json({ error: 'Failed to create booking: ' + error.message });
     }
 });
@@ -311,14 +335,17 @@ app.get('/api/bookings', adminAuth, async (req, res) => {
         const bookings = await Booking.find().sort({ createdAt: -1 });
         res.json(bookings);
     } catch (error) {
-        console.error('Error in GET /api/bookings:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in GET /api/bookings:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
 // Update Booking Status (Admin)
 app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
     try {
+        console.log('Received PATCH /api/bookings/:id request');
+        console.log('Booking ID:', req.params.id);
+        console.log('Request body:', req.body);
         const { status } = req.body;
         if (!status) {
             return res.status(400).json({ error: 'Status is required' });
@@ -331,11 +358,24 @@ app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
         if (!booking) {
             return res.status(404).json({ error: 'Booking not found' });
         }
+        console.log('Booking updated successfully:', booking);
         res.json({ message: 'Booking status updated', booking });
     } catch (error) {
-        console.error('Error in PATCH /api/bookings/:id:', error);
-        res.status(500).json({ error: 'Server error' });
+        console.error('Error in PATCH /api/bookings/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
+});
+
+// Catch-all route for unmatched routes
+app.use((req, res) => {
+    console.log(`Unmatched route: ${req.method} ${req.url}`);
+    res.status(404).json({ error: `Route not found: ${req.method} ${req.url}` });
+});
+
+// Error-handling middleware for uncaught errors
+app.use((err, req, res, next) => {
+    console.error('Uncaught error:', err.message);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
 });
 
 const PORT = process.env.PORT || 3000;
