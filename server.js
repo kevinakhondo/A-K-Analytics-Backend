@@ -81,12 +81,20 @@ app.get('/api/reviews', async (req, res) => {
 });
 
 // Admin Authentication Middleware
-const adminAuth = (req, res, next) => {
+const adminAuth = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
-    if (token !== process.env.ADMIN_TOKEN) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    try {
+        if (token === process.env.ADMIN_TOKEN) return next();
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (!user || !user.email.includes('admin@akanalytics.com')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        next();
+    } catch (error) {
+        res.status(401).json({ error: 'Invalid token' });
     }
-    next();
 };
 
 // Get All Reviews (Admin)
