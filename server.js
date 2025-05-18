@@ -88,7 +88,7 @@ const adminAuth = async (req, res, next) => {
         if (token === process.env.ADMIN_TOKEN) return next();
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findById(decoded.userId);
-        if (!user || !user.email.includes('admin@akanalytics.com')) {
+        if (!user || !user.email.includes('kevinakhondo9@gmail.com')) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         next();
