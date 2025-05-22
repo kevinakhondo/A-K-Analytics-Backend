@@ -68,7 +68,7 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
-// Admin Users Schema (separate collection for internal admins)
+// Admin Users Schema
 const AdminUserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
@@ -86,9 +86,19 @@ const BookingSchema = new mongoose.Schema({
     service: { type: String, required: true },
     status: { type: String, default: 'pending' },
     createdAt: { type: Date, default: Date.now },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    teamMember: { type: String } // Added for team assignment
 });
 const Booking = mongoose.model('Booking', BookingSchema);
+
+// Service Schema
+const ServiceSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    description: { type: String, required: true },
+    status: { type: String, default: 'active' },
+    createdAt: { type: Date, default: Date.now }
+});
+const Service = mongoose.model('Service', ServiceSchema);
 
 // Project Schema
 const ProjectSchema = new mongoose.Schema({
@@ -97,6 +107,7 @@ const ProjectSchema = new mongoose.Schema({
     deadline: { type: String, required: true },
     status: { type: String, enum: ['In Progress', 'Awaiting Data', 'Completed'], default: 'In Progress' },
     deliverables: [{ type: String }],
+    reportUrl: { type: String }, // Added for report uploads
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Project = mongoose.model('Project', ProjectSchema);
@@ -112,7 +123,7 @@ const SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema);
 
 // Invoice Schema
 const InvoiceSchema = new mongoose.Schema({
-    amount: { type: String, required: true },
+    amount: { type: Number, required: true }, // Changed to Number for revenue calculations
     date: { type: String, required: true },
     url: { type: String },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -123,6 +134,7 @@ const Invoice = mongoose.model('Invoice', InvoiceSchema);
 const NotificationSchema = new mongoose.Schema({
     message: { type: String, required: true },
     date: { type: String, required: true },
+    email: { type: String }, // Added for admin notifications
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Notification = mongoose.model('Notification', NotificationSchema);
@@ -144,7 +156,7 @@ const SettingsSchema = new mongoose.Schema({
 });
 const Settings = mongoose.model('Settings', SettingsSchema);
 
-// Authentication Middleware
+// Authentication Middleware (for users)
 const authMiddleware = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token provided' });
@@ -160,7 +172,7 @@ const authMiddleware = async (req, res, next) => {
     }
 };
 
-// Admin Authentication Middleware
+// Admin Authentication Middleware (Updated for role-based access)
 const adminAuth = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token provided' });
@@ -192,10 +204,8 @@ app.post('/api/admin/login', async (req, res) => {
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
         }
-        // Check AdminUser collection first
         let admin = await AdminUser.findOne({ email });
         if (!admin) {
-            // Fallback to User with admin role
             admin = await User.findOne({ email, role: 'admin' });
             if (!admin) return res.status(401).json({ error: 'Admin not found' });
         }
@@ -203,12 +213,12 @@ app.post('/api/admin/login', async (req, res) => {
         if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
         const token = jwt.sign({ userId: admin._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
         await new AuditLog({ action: 'admin_login', details: { email }, admin: admin._id }).save();
-        res.json({ message: 'Admin login successful', token });
+        res.json({ message: 'Admin login successful', token, user: { email, role: 'admin' } });
     } catch (error) {
         console.error('Error in POST /api/admin/login:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
-});
+};
 
 // Admin Overview
 app.get('/api/admin/overview', adminAuth, async (req, res) => {
@@ -216,8 +226,11 @@ app.get('/api/admin/overview', adminAuth, async (req, res) => {
         const stats = {
             totalUsers: await User.countDocuments(),
             bookings: await Booking.countDocuments(),
-            activeServices: await Booking.distinct('service').length, // Approx. active services
-            revenue: await Booking.aggregate([{ $group: { _id: null, total: { $sum: 100 } } }]).then(r => r[0]?.total || 0) // Placeholder revenue logic
+            activeServices: await Service.countDocuments({ status: 'active' }),
+            revenue: await Invoice.aggregate([
+                { $match: { date: { $gte: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0] } } },
+                { $group: { _id: null, total: { $sum: '$amount' } } }
+            ]).then(r => r[0]?.total || 0)
         };
         await new AuditLog({ action: 'view_overview', details: stats, admin: req.user._id }).save();
         res.json(stats);
@@ -227,7 +240,7 @@ app.get('/api/admin/overview', adminAuth, async (req, res) => {
     }
 });
 
-// Admin Users
+// Admin Users (Enhanced with DELETE and Password Reset)
 app.get('/api/admin/users', adminAuth, async (req, res) => {
     try {
         const users = await User.find()
@@ -244,14 +257,54 @@ app.get('/api/admin/users', adminAuth, async (req, res) => {
     }
 });
 
-// Admin Services (Create)
+app.delete('/api/users/:id', adminAuth, async (req, res) => {
+    try {
+        const user = await User.findByIdAndDelete(req.params.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        await new AuditLog({ action: 'delete_user', details: { userId: req.params.id }, admin: req.user._id }).save();
+        res.json({ message: 'User deleted' });
+    } catch (error) {
+        console.error('Error in DELETE /api/users/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+app.post('/api/admin/users/:id/reset-password', adminAuth, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        const newPassword = Math.random().toString(36).slice(-8); // Generate random password
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+        await transporter.sendMail({
+            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
+            to: user.email,
+            subject: 'Password Reset',
+            html: `<p>Your new password is: ${newPassword}</p><p>Please log in and change it.</p>`
+        });
+        await new AuditLog({ action: 'reset_password', details: { userId: req.params.id }, admin: req.user._id }).save();
+        res.json({ message: 'Password reset and emailed to user' });
+    } catch (error) {
+        console.error('Error in POST /api/admin/users/:id/reset-password:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Admin Services
+app.get('/api/admin/services', adminAuth, async (req, res) => {
+    try {
+        const services = await Service.find();
+        res.json(services);
+    } catch (error) {
+        console.error('Error in GET /api/admin/services:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
 app.post('/api/admin/services', adminAuth, async (req, res) => {
     try {
         const { name, description } = req.body;
         if (!name || !description) return res.status(400).json({ error: 'Name and description are required' });
-        // Assuming a Service model (add if not exists)
-        const ServiceSchema = new mongoose.Schema({ name: String, description: String, status: { type: String, default: 'active' } });
-        const Service = mongoose.model('Service', ServiceSchema);
         const service = new Service({ name, description });
         await service.save();
         await new AuditLog({ action: 'create_service', details: { name }, admin: req.user._id }).save();
@@ -262,13 +315,35 @@ app.post('/api/admin/services', adminAuth, async (req, res) => {
     }
 });
 
-// Admin Projects (Update)
+app.delete('/api/admin/services/:id', adminAuth, async (req, res) => {
+    try {
+        const service = await Service.findByIdAndDelete(req.params.id);
+        if (!service) return res.status(404).json({ error: 'Service not found' });
+        await new AuditLog({ action: 'delete_service', details: { serviceId: req.params.id }, admin: req.user._id }).save();
+        res.json({ message: 'Service deleted' });
+    } catch (error) {
+        console.error('Error in DELETE /api/admin/services/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Admin Projects
+app.get('/api/admin/projects', adminAuth, async (req, res) => {
+    try {
+        const projects = await Project.find().populate('user');
+        res.json(projects);
+    } catch (error) {
+        console.error('Error in GET /api/admin/projects:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
 app.patch('/api/admin/projects/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const project = await Project.findByIdAndUpdate(id, req.body, { new: true });
         if (!project) return res.status(404).json({ error: 'Project not found' });
-        await new AuditLog({ action: 'update_project', details: { id }, admin: req.user._id }).save();
+        await new AuditLog({ action: 'update_project', details: { id, status: req.body.status }, admin: req.user._id }).save();
         res.json(project);
     } catch (error) {
         console.error('Error in PATCH /api/admin/projects/:id:', error.message);
@@ -276,19 +351,38 @@ app.patch('/api/admin/projects/:id', adminAuth, async (req, res) => {
     }
 });
 
-// Admin Bookings
-app.get('/api/admin/bookings', adminAuth, async (req, res) => {
+// Admin Analytics (Placeholder data)
+app.get('/api/admin/analytics', adminAuth, async (req, res) => {
     try {
-        const bookings = await Booking.find().sort({ createdAt: -1 });
-        await new AuditLog({ action: 'view_bookings', details: { count: bookings.length }, admin: req.user._id }).save();
-        res.json(bookings);
+        const usage = await User.countDocuments();
+        const trends = await Booking.aggregate([
+            { $group: { _id: '$date', count: { $sum: 1 } } },
+            { $sort: { _id: -1 } },
+            { $limit: 5 }
+        ]).then(data => data.map(d => `${d._id}: ${d.count} bookings`));
+        const popularity = await Booking.aggregate([
+            { $group: { _id: '$service', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 5 }
+        ]).then(data => data.map(d => `${d._id}: ${d.count} bookings`));
+        res.json({ usage, trends, popularity });
     } catch (error) {
-        console.error('Error in GET /api/admin/bookings:', error.message);
+        console.error('Error in GET /api/admin/analytics:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-// Admin Notify
+// Admin Notifications
+app.get('/api/admin/notifications', adminAuth, async (req, res) => {
+    try {
+        const notifications = await Notification.find().sort({ date: -1 });
+        res.json(notifications);
+    } catch (error) {
+        console.error('Error in GET /api/admin/notifications:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
 app.post('/api/admin/notify', adminAuth, async (req, res) => {
     try {
         const { email, message } = req.body;
@@ -299,12 +393,50 @@ app.post('/api/admin/notify', adminAuth, async (req, res) => {
             subject: 'Notification from A & K Analytics',
             html: `<p>${message}</p>`
         });
-        const notification = new Notification({ message, date: new Date().toISOString().split('T')[0], user: null }); // Adjust user if needed
+        const notification = new Notification({ message, date: new Date().toISOString().split('T')[0], email });
         await notification.save();
         await new AuditLog({ action: 'send_notification', details: { email, message }, admin: req.user._id }).save();
         res.json({ success: true });
     } catch (error) {
         console.error('Error in POST /api/admin/notify:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Admin Team Management
+app.get('/api/admin/team', adminAuth, async (req, res) => {
+    try {
+        const admins = await AdminUser.find();
+        res.json(admins);
+    } catch (error) {
+        console.error('Error in GET /api/admin/team:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+app.post('/api/admin/team', adminAuth, async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const admin = new AdminUser({ email, password: hashedPassword });
+        await admin.save();
+        await new AuditLog({ action: 'create_admin', details: { email }, admin: req.user._id }).save();
+        res.status(201).json(admin);
+    } catch (error) {
+        console.error('Error in POST /api/admin/team:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+app.delete('/api/admin/team/:id', adminAuth, async (req, res) => {
+    try {
+        const admin = await AdminUser.findByIdAndDelete(req.params.id);
+        if (!admin) return res.status(404).json({ error: 'Admin not found' });
+        await new AuditLog({ action: 'delete_admin', details: { adminId: req.params.id }, admin: req.user._id }).save();
+        res.json({ message: 'Admin deleted' });
+    } catch (error) {
+        console.error('Error in DELETE /api/admin/team/:id:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
@@ -316,6 +448,7 @@ app.get('/', (req, res) => {
 });
 
 // Review Submission, Get Approved Reviews, etc. (Unchanged, included above)
+// User Signup, Login, Profile, Bookings, Support Tickets (Unchanged, included above)
 
 // Catch-all route for unmatched routes
 app.use((req, res) => {
