@@ -16,12 +16,12 @@ app.use(cors({
 }));
 
 // MongoDB Connection with better error handling
-if (!process.env.MONGODB_URI) {
-    console.error('MONGODB_URI is not defined in environment variables');
+if (!process.env.MONGO_URI) {
+    console.error('MONGO_URI is not defined in environment variables');
     process.exit(1);
 }
 
-mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => {
         console.error('MongoDB connection error:', err);
@@ -54,7 +54,15 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true },
     isVerified: { type: Boolean, default: false },
     verificationToken: { type: String },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    company: { type: String },
+    profileCompletion: { type: Number, default: 0 },
+    notificationChannels: { type: [String], default: ['Email'] },
+    projects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Project' }],
+    bookings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Booking' }],
+    supportTickets: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SupportTicket' }],
+    invoices: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' }],
+    notifications: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Notification' }]
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -66,9 +74,46 @@ const BookingSchema = new mongoose.Schema({
     time: { type: String, required: true },
     service: { type: String, required: true },
     status: { type: String, default: 'pending' },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Booking = mongoose.model('Booking', BookingSchema);
+
+// Project Schema
+const ProjectSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    startDate: { type: String, required: true },
+    deadline: { type: String, required: true },
+    status: { type: String, enum: ['In Progress', 'Awaiting Data', 'Completed'], default: 'In Progress' },
+    deliverables: [{ type: String }],
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+const Project = mongoose.model('Project', ProjectSchema);
+
+// SupportTicket Schema
+const SupportTicketSchema = new mongoose.Schema({
+    subject: { type: String, required: true },
+    status: { type: String, enum: ['Open', 'Closed'], default: 'Open' },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+const SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema);
+
+// Invoice Schema
+const InvoiceSchema = new mongoose.Schema({
+    amount: { type: String, required: true },
+    date: { type: String, required: true },
+    url: { type: String },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+const Invoice = mongoose.model('Invoice', InvoiceSchema);
+
+// Notification Schema
+const NotificationSchema = new mongoose.Schema({
+    message: { type: String, required: true },
+    date: { type: String, required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+const Notification = mongoose.model('Notification', NotificationSchema);
 
 // Authentication Middleware (for users)
 const authMiddleware = async (req, res, next) => {
@@ -288,26 +333,41 @@ app.post('/api/users/login', async (req, res) => {
 });
 
 // User Profile (Protected)
-app.get('/api/users/profile', async (req, res) => {
+app.get('/api/users/profile', authMiddleware, async (req, res) => {
     try {
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) {
-            return res.status(401).json({ error: 'No token provided' });
-        }
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.userId).select('-password -verificationToken');
+        const user = await User.findById(req.user._id)
+            .populate('projects')
+            .populate('bookings')
+            .populate('supportTickets')
+            .populate('invoices')
+            .populate('notifications');
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-        res.json(user);
+        res.json({
+            name: user.name,
+            profileCompletion: user.profileCompletion,
+            projects: user.projects || [],
+            analytics: [{ title: 'Sales Forecast Q2', previewUrl: 'https://tableau.com/preview', kpis: 'Accuracy: 93%' }], // Placeholder
+            bookings: user.bookings || [],
+            supportTickets: user.supportTickets || [],
+            invoices: user.invoices || [],
+            notifications: user.notifications || [],
+            preferences: {
+                name: user.name,
+                email: user.email,
+                company: user.company,
+                notificationChannels: user.notificationChannels
+            }
+        });
     } catch (error) {
         console.error('Error in GET /api/users/profile:', error.message);
-        res.status(401).json({ error: 'Invalid token: ' + error.message });
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
 // Create Booking
-app.post('/api/bookings', async (req, res) => {
+app.post('/api/bookings', authMiddleware, async (req, res) => {
     try {
         const { name, email, date, time, service, status } = req.body;
         if (!name || !email || !date || !time || !service) {
@@ -319,9 +379,39 @@ app.post('/api/bookings', async (req, res) => {
             date,
             time,
             service,
-            status: status || 'pending'
+            status: status || 'pending',
+            user: req.user._id
         });
         await booking.save();
+
+        // Add booking to user's bookings
+        req.user.bookings.push(booking._id);
+        await req.user.save();
+
+        // Send confirmation email
+        await transporter.sendMail({
+            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Booking Confirmation',
+            html: `
+                <h2>Booking Confirmed!</h2>
+                <p>Dear ${name},</p>
+                <p>Your booking for ${service} on ${date} at ${time} has been received.</p>
+                <p>Status: ${status || 'pending'}</p>
+                <p>We'll notify you once it's confirmed.</p>
+            `
+        });
+
+        // Create notification
+        const notification = new Notification({
+            message: `Booking for ${service} on ${date} received`,
+            date: new Date().toISOString().split('T')[0],
+            user: req.user._id
+        });
+        await notification.save();
+        req.user.notifications.push(notification._id);
+        await req.user.save();
+
         res.status(201).json({ message: 'Booking created successfully', booking });
     } catch (error) {
         console.error('Error in POST /api/bookings:', error.message);
@@ -359,6 +449,33 @@ app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
             return res.status(404).json({ error: 'Booking not found' });
         }
         console.log('Booking updated successfully:', booking);
+
+        // Send status update email
+        await transporter.sendMail({
+            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
+            to: booking.email,
+            subject: 'Booking Status Update',
+            html: `
+                <h2>Booking Update</h2>
+                <p>Dear ${booking.name},</p>
+                <p>Your booking for ${booking.service} on ${booking.date} at ${booking.time} has been updated.</p>
+                <p>New Status: ${status}</p>
+            `
+        });
+
+        // Create notification
+        const notification = new Notification({
+            message: `Booking status updated to ${status}`,
+            date: new Date().toISOString().split('T')[0],
+            user: booking.user
+        });
+        await notification.save();
+        const user = await User.findById(booking.user);
+        if (user) {
+            user.notifications.push(notification._id);
+            await user.save();
+        }
+
         res.json({ message: 'Booking status updated', booking });
     } catch (error) {
         console.error('Error in PATCH /api/bookings/:id:', error.message);

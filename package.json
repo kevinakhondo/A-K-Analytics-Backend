@@ -19,5 +19,17 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.0",
     "nodemailer": "^6.10.1"
-  }
+  },
+  "description": "\"# akanalytics-backend\"",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevinakhondo/A-K-Analytics-Backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kevinakhondo/A-K-Analytics-Backend/issues"
+  },
+  "homepage": "https://github.com/kevinakhondo/A-K-Analytics-Backend#readme"
 }
