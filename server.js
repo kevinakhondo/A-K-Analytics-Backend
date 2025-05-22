@@ -94,7 +94,8 @@ const Project = mongoose.model('Project', ProjectSchema);
 const SupportTicketSchema = new mongoose.Schema({
     subject: { type: String, required: true },
     status: { type: String, enum: ['Open', 'Closed'], default: 'Open' },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    createdAt: { type: Date, default: Date.now }
 });
 const SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema);
 
@@ -348,7 +349,7 @@ app.get('/api/users/profile', authMiddleware, async (req, res) => {
             name: user.name,
             profileCompletion: user.profileCompletion,
             projects: user.projects || [],
-            analytics: [{ title: 'Sales Forecast Q2', previewUrl: 'https://tableau.com/preview', kpis: 'Accuracy: 93%' }], // Placeholder
+            analytics: [{ title: 'Sales Forecast Q2', previewUrl: 'https://tableau.com/preview', kpis: 'Accuracy: 93%' }],
             bookings: user.bookings || [],
             supportTickets: user.supportTickets || [],
             invoices: user.invoices || [],
@@ -362,6 +363,22 @@ app.get('/api/users/profile', authMiddleware, async (req, res) => {
         });
     } catch (error) {
         console.error('Error in GET /api/users/profile:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get All Users (Admin)
+app.get('/api/users', adminAuth, async (req, res) => {
+    try {
+        const users = await User.find()
+            .populate('projects')
+            .populate('bookings')
+            .populate('supportTickets')
+            .populate('invoices')
+            .populate('notifications');
+        res.json(users);
+    } catch (error) {
+        console.error('Error in GET /api/users:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
@@ -479,6 +496,53 @@ app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
         res.json({ message: 'Booking status updated', booking });
     } catch (error) {
         console.error('Error in PATCH /api/bookings/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get All Support Tickets (Admin)
+app.get('/api/support-tickets', adminAuth, async (req, res) => {
+    try {
+        const tickets = await SupportTicket.find().populate('user').sort({ createdAt: -1 });
+        res.json(tickets);
+    } catch (error) {
+        console.error('Error in GET /api/support-tickets:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Update Support Ticket Status (Admin)
+app.patch('/api/support-tickets/:id', adminAuth, async (req, res) => {
+    try {
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required' });
+        }
+        const ticket = await SupportTicket.findByIdAndUpdate(
+            req.params.id,
+            { status },
+            { new: true }
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Support ticket not found' });
+        }
+
+        // Create notification for the user
+        const notification = new Notification({
+            message: `Support ticket "${ticket.subject}" status updated to ${status}`,
+            date: new Date().toISOString().split('T')[0],
+            user: ticket.user
+        });
+        await notification.save();
+        const user = await User.findById(ticket.user);
+        if (user) {
+            user.notifications.push(notification._id);
+            await user.save();
+        }
+
+        res.json({ message: 'Support ticket status updated', ticket });
+    } catch (error) {
+        console.error('Error in PATCH /api/support-tickets/:id:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
