@@ -11,7 +11,19 @@ const userSchema = new mongoose.Schema({
     bookings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Booking' }],
     supportTickets: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SupportTicket' }],
     invoices: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' }],
-    notifications: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Notification' }]
-});
+    notifications: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Notification' }],
+    role: { 
+        type: String, 
+        enum: ['admin', 'customer'], 
+        default: 'customer' 
+    },
+    emailVerified: { 
+        type: Boolean, 
+        default: false 
+    }
+}, { timestamps: true });
+
+userSchema.index({ email: 1 }); // Ensure efficient queries by email
+userSchema.index({ role: 1 }); // Support role-based queries
 
 module.exports = mongoose.model('User', userSchema);

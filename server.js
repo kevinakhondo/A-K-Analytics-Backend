@@ -37,7 +37,6 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-// Schemas
 // Review Schema
 const ReviewSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -53,7 +52,6 @@ const UserSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    role: { type: String, enum: ['customer', 'admin'], default: 'customer' }, // Added role field
     isVerified: { type: Boolean, default: false },
     verificationToken: { type: String },
     createdAt: { type: Date, default: Date.now },
@@ -68,15 +66,6 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
-// Admin Users Schema
-const AdminUserSchema = new mongoose.Schema({
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    role: { type: String, default: 'admin' },
-    createdAt: { type: Date, default: Date.now }
-});
-const AdminUser = mongoose.model('AdminUser', AdminUserSchema);
-
 // Booking Schema
 const BookingSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -86,19 +75,9 @@ const BookingSchema = new mongoose.Schema({
     service: { type: String, required: true },
     status: { type: String, default: 'pending' },
     createdAt: { type: Date, default: Date.now },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    teamMember: { type: String } // Added for team assignment
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Booking = mongoose.model('Booking', BookingSchema);
-
-// Service Schema
-const ServiceSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    description: { type: String, required: true },
-    status: { type: String, default: 'active' },
-    createdAt: { type: Date, default: Date.now }
-});
-const Service = mongoose.model('Service', ServiceSchema);
 
 // Project Schema
 const ProjectSchema = new mongoose.Schema({
@@ -107,7 +86,6 @@ const ProjectSchema = new mongoose.Schema({
     deadline: { type: String, required: true },
     status: { type: String, enum: ['In Progress', 'Awaiting Data', 'Completed'], default: 'In Progress' },
     deliverables: [{ type: String }],
-    reportUrl: { type: String }, // Added for report uploads
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Project = mongoose.model('Project', ProjectSchema);
@@ -123,7 +101,7 @@ const SupportTicket = mongoose.model('SupportTicket', SupportTicketSchema);
 
 // Invoice Schema
 const InvoiceSchema = new mongoose.Schema({
-    amount: { type: Number, required: true }, // Changed to Number for revenue calculations
+    amount: { type: String, required: true },
     date: { type: String, required: true },
     url: { type: String },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -134,27 +112,9 @@ const Invoice = mongoose.model('Invoice', InvoiceSchema);
 const NotificationSchema = new mongoose.Schema({
     message: { type: String, required: true },
     date: { type: String, required: true },
-    email: { type: String }, // Added for admin notifications
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 const Notification = mongoose.model('Notification', NotificationSchema);
-
-// Audit Log Schema
-const AuditLogSchema = new mongoose.Schema({
-    action: { type: String, required: true },
-    details: { type: Object },
-    timestamp: { type: Date, default: Date.now },
-    admin: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' }
-});
-const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
-
-// Settings Schema
-const SettingsSchema = new mongoose.Schema({
-    key: { type: String, required: true },
-    value: { type: Object },
-    updatedAt: { type: Date, default: Date.now }
-});
-const Settings = mongoose.model('Settings', SettingsSchema);
 
 // Authentication Middleware (for users)
 const authMiddleware = async (req, res, next) => {
@@ -172,24 +132,29 @@ const authMiddleware = async (req, res, next) => {
     }
 };
 
-// Admin Authentication Middleware (Updated for role-based access)
+// Admin Authentication Middleware
 const adminAuth = async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token provided' });
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        let admin;
-        // Check if the token is for an AdminUser or a User with admin role
-        admin = await AdminUser.findById(decoded.userId);
-        if (!admin) {
-            const user = await User.findById(decoded.userId);
-            if (!user || user.role !== 'admin') {
-                return res.status(403).json({ error: 'Unauthorized: Admin access only' });
-            }
-            admin = user;
+        if (token === process.env.ADMIN_TOKEN) {
+            console.log('Admin authenticated via ADMIN_TOKEN');
+            return next();
         }
-        req.user = admin;
-        console.log('Admin authenticated:', admin.email);
+        if (!process.env.JWT_SECRET) {
+            console.error('JWT_SECRET is not defined');
+            return res.status(500).json({ error: 'Server configuration error: JWT_SECRET missing' });
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        if (!user.email.includes('kevinakhondo9@gmail.com')) {
+            return res.status(403).json({ error: 'Unauthorized: Admin access only' });
+        }
+        req.user = user;
+        console.log('Admin authenticated via JWT:', user.email);
         next();
     } catch (error) {
         console.error('Admin auth middleware error:', error.message);
@@ -197,51 +162,213 @@ const adminAuth = async (req, res, next) => {
     }
 };
 
-// Admin Login (Separate route)
-app.post('/api/admin/login', async (req, res) => {
+// Root Route
+app.get('/', (req, res) => {
+    res.json({ status: 'Backend is running', version: '1.0.0' });
+});
+
+// Review Submission
+app.post('/api/reviews', async (req, res) => {
+    try {
+        const { name, text, rating } = req.body;
+        if (!name || !text || !rating || rating < 1 || rating > 5) {
+            return res.status(400).json({ error: 'All fields are required and rating must be 1-5' });
+        }
+        const review = new Review({ name, text, rating });
+        await review.save();
+        res.status(201).json({ message: 'Review submitted, pending approval' });
+    } catch (error) {
+        console.error('Error in POST /api/reviews:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get Approved Reviews
+app.get('/api/reviews', async (req, res) => {
+    try {
+        const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
+        res.json(reviews);
+    } catch (error) {
+        console.error('Error in GET /api/reviews:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get User Reviews
+app.get('/api/reviews/user/:name', authMiddleware, async (req, res) => {
+    try {
+        const name = req.params.name;
+        if (req.user.name !== name && !req.user.email.includes('kevinakhondo9@gmail.com')) {
+            return res.status(403).json({ error: 'Unauthorized to view these reviews' });
+        }
+        const reviews = await Review.find({ name }).sort({ createdAt: -1 });
+        res.json(reviews);
+    } catch (error) {
+        console.error('Error in GET /api/reviews/user/:name:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get Pending Reviews Count (Admin)
+app.get('/api/reviews/pending', adminAuth, async (req, res) => {
+    try {
+        const count = await Review.countDocuments({ approved: false });
+        res.json({ count });
+    } catch (error) {
+        console.error('Error in GET /api/reviews/pending:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get All Reviews (Admin)
+app.get('/api/reviews/all', adminAuth, async (req, res) => {
+    try {
+        const reviews = await Review.find().sort({ createdAt: -1 });
+        res.json(reviews);
+    } catch (error) {
+        console.error('Error in GET /api/reviews/all:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Update Review Approval (Admin)
+app.patch('/api/reviews/:id', adminAuth, async (req, res) => {
+    try {
+        const { approved } = req.body;
+        const review = await Review.findByIdAndUpdate(req.params.id, { approved }, { new: true });
+        if (!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+        res.json({ message: 'Review updated', review });
+    } catch (error) {
+        console.error('Error in PATCH /api/reviews/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// User Signup
+app.post('/api/users/signup', async (req, res) => {
+    try {
+        const { name, email, password } = req.body;
+        if (!name || !email || !password) {
+            return res.status(400).json({ error: 'All fields are required' });
+        }
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ error: 'Email already exists' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const verificationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        const user = new User({
+            name,
+            email,
+            password: hashedPassword,
+            verificationToken
+        });
+        await user.save();
+
+        const verificationUrl = `https://akaana.netlify.app/?verify=${verificationToken}`;
+        await transporter.sendMail({
+            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Verify Your Email',
+            html: `
+                <h2>Welcome to A & K Analytics!</h2>
+                <p>Please verify your email by clicking the link below:</p>
+                <a href="${verificationUrl}" style="padding: 10px 20px; background: #00bcd4; color: #ffffff; text-decoration: none; border-radius: 4px;">Verify Email</a>
+                <p>If the button doesn't work, copy and paste this link: ${verificationUrl}</p>
+            `
+        });
+
+        res.status(201).json({ message: 'User created. Please check your email to verify your account.' });
+    } catch (error) {
+        console.error('Error in POST /api/users/signup:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Email Verification
+app.get('/api/users/verify/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email, verificationToken: token });
+        if (!user) {
+            return res.status(400).json({ error: 'Invalid or expired verification token' });
+        }
+        user.isVerified = true;
+        user.verificationToken = null;
+        await user.save();
+        const authToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.json({ message: 'Email verified successfully', token: authToken });
+    } catch (error) {
+        console.error('Error in GET /api/users/verify/:token:', error.message);
+        res.status(400).json({ error: 'Invalid or expired verification token: ' + error.message });
+    }
+});
+
+// User Login
+app.post('/api/users/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
         }
-        let admin = await AdminUser.findOne({ email });
-        if (!admin) {
-            admin = await User.findOne({ email, role: 'admin' });
-            if (!admin) return res.status(401).json({ error: 'Admin not found' });
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
-        const isMatch = await bcrypt.compare(password, admin.password);
-        if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
-        const token = jwt.sign({ userId: admin._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        await new AuditLog({ action: 'admin_login', details: { email }, admin: admin._id }).save();
-        res.json({ message: 'Admin login successful', token, user: { email, role: 'admin' } });
+        if (!user.isVerified) {
+            return res.status(401).json({ error: 'Please verify your email first' });
+        }
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.json({ message: 'Login successful', token });
     } catch (error) {
-        console.error('Error in POST /api/admin/login:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-};
-
-// Admin Overview
-app.get('/api/admin/overview', adminAuth, async (req, res) => {
-    try {
-        const stats = {
-            totalUsers: await User.countDocuments(),
-            bookings: await Booking.countDocuments(),
-            activeServices: await Service.countDocuments({ status: 'active' }),
-            revenue: await Invoice.aggregate([
-                { $match: { date: { $gte: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0] } } },
-                { $group: { _id: null, total: { $sum: '$amount' } } }
-            ]).then(r => r[0]?.total || 0)
-        };
-        await new AuditLog({ action: 'view_overview', details: stats, admin: req.user._id }).save();
-        res.json(stats);
-    } catch (error) {
-        console.error('Error in GET /api/admin/overview:', error.message);
+        console.error('Error in POST /api/users/login:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-// Admin Users (Enhanced with DELETE and Password Reset)
-app.get('/api/admin/users', adminAuth, async (req, res) => {
+// User Profile (Protected)
+app.get('/api/users/profile', authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id)
+            .populate('projects')
+            .populate('bookings')
+            .populate('supportTickets')
+            .populate('invoices')
+            .populate('notifications');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({
+            name: user.name,
+            profileCompletion: user.profileCompletion,
+            projects: user.projects || [],
+            analytics: [{ title: 'Sales Forecast Q2', previewUrl: 'https://tableau.com/preview', kpis: 'Accuracy: 93%' }],
+            bookings: user.bookings || [],
+            supportTickets: user.supportTickets || [],
+            invoices: user.invoices || [],
+            notifications: user.notifications || [],
+            preferences: {
+                name: user.name,
+                email: user.email,
+                company: user.company,
+                notificationChannels: user.notificationChannels
+            }
+        });
+    } catch (error) {
+        console.error('Error in GET /api/users/profile:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
+
+// Get All Users (Admin)
+app.get('/api/users', adminAuth, async (req, res) => {
     try {
         const users = await User.find()
             .populate('projects')
@@ -249,206 +376,176 @@ app.get('/api/admin/users', adminAuth, async (req, res) => {
             .populate('supportTickets')
             .populate('invoices')
             .populate('notifications');
-        await new AuditLog({ action: 'view_users', details: { count: users.length }, admin: req.user._id }).save();
         res.json(users);
     } catch (error) {
-        console.error('Error in GET /api/admin/users:', error.message);
+        console.error('Error in GET /api/users:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-app.delete('/api/users/:id', adminAuth, async (req, res) => {
+// Create Booking
+app.post('/api/bookings', authMiddleware, async (req, res) => {
     try {
-        const user = await User.findByIdAndDelete(req.params.id);
-        if (!user) return res.status(404).json({ error: 'User not found' });
-        await new AuditLog({ action: 'delete_user', details: { userId: req.params.id }, admin: req.user._id }).save();
-        res.json({ message: 'User deleted' });
-    } catch (error) {
-        console.error('Error in DELETE /api/users/:id:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-app.post('/api/admin/users/:id/reset-password', adminAuth, async (req, res) => {
-    try {
-        const user = await User.findById(req.params.id);
-        if (!user) return res.status(404).json({ error: 'User not found' });
-        const newPassword = Math.random().toString(36).slice(-8); // Generate random password
-        user.password = await bcrypt.hash(newPassword, 10);
-        await user.save();
-        await transporter.sendMail({
-            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
-            to: user.email,
-            subject: 'Password Reset',
-            html: `<p>Your new password is: ${newPassword}</p><p>Please log in and change it.</p>`
+        const { name, email, date, time, service, status } = req.body;
+        if (!name || !email || !date || !time || !service) {
+            return res.status(400).json({ error: 'All fields (name, email, date, time, service) are required' });
+        }
+        const booking = new Booking({
+            name,
+            email,
+            date,
+            time,
+            service,
+            status: status || 'pending',
+            user: req.user._id
         });
-        await new AuditLog({ action: 'reset_password', details: { userId: req.params.id }, admin: req.user._id }).save();
-        res.json({ message: 'Password reset and emailed to user' });
-    } catch (error) {
-        console.error('Error in POST /api/admin/users/:id/reset-password:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
+        await booking.save();
 
-// Admin Services
-app.get('/api/admin/services', adminAuth, async (req, res) => {
-    try {
-        const services = await Service.find();
-        res.json(services);
-    } catch (error) {
-        console.error('Error in GET /api/admin/services:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
+        // Add booking to user's bookings
+        req.user.bookings.push(booking._id);
+        await req.user.save();
 
-app.post('/api/admin/services', adminAuth, async (req, res) => {
-    try {
-        const { name, description } = req.body;
-        if (!name || !description) return res.status(400).json({ error: 'Name and description are required' });
-        const service = new Service({ name, description });
-        await service.save();
-        await new AuditLog({ action: 'create_service', details: { name }, admin: req.user._id }).save();
-        res.status(201).json(service);
-    } catch (error) {
-        console.error('Error in POST /api/admin/services:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-app.delete('/api/admin/services/:id', adminAuth, async (req, res) => {
-    try {
-        const service = await Service.findByIdAndDelete(req.params.id);
-        if (!service) return res.status(404).json({ error: 'Service not found' });
-        await new AuditLog({ action: 'delete_service', details: { serviceId: req.params.id }, admin: req.user._id }).save();
-        res.json({ message: 'Service deleted' });
-    } catch (error) {
-        console.error('Error in DELETE /api/admin/services/:id:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-// Admin Projects
-app.get('/api/admin/projects', adminAuth, async (req, res) => {
-    try {
-        const projects = await Project.find().populate('user');
-        res.json(projects);
-    } catch (error) {
-        console.error('Error in GET /api/admin/projects:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-app.patch('/api/admin/projects/:id', adminAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const project = await Project.findByIdAndUpdate(id, req.body, { new: true });
-        if (!project) return res.status(404).json({ error: 'Project not found' });
-        await new AuditLog({ action: 'update_project', details: { id, status: req.body.status }, admin: req.user._id }).save();
-        res.json(project);
-    } catch (error) {
-        console.error('Error in PATCH /api/admin/projects/:id:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-// Admin Analytics (Placeholder data)
-app.get('/api/admin/analytics', adminAuth, async (req, res) => {
-    try {
-        const usage = await User.countDocuments();
-        const trends = await Booking.aggregate([
-            { $group: { _id: '$date', count: { $sum: 1 } } },
-            { $sort: { _id: -1 } },
-            { $limit: 5 }
-        ]).then(data => data.map(d => `${d._id}: ${d.count} bookings`));
-        const popularity = await Booking.aggregate([
-            { $group: { _id: '$service', count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
-            { $limit: 5 }
-        ]).then(data => data.map(d => `${d._id}: ${d.count} bookings`));
-        res.json({ usage, trends, popularity });
-    } catch (error) {
-        console.error('Error in GET /api/admin/analytics:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-// Admin Notifications
-app.get('/api/admin/notifications', adminAuth, async (req, res) => {
-    try {
-        const notifications = await Notification.find().sort({ date: -1 });
-        res.json(notifications);
-    } catch (error) {
-        console.error('Error in GET /api/admin/notifications:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
-    }
-});
-
-app.post('/api/admin/notify', adminAuth, async (req, res) => {
-    try {
-        const { email, message } = req.body;
-        if (!email || !message) return res.status(400).json({ error: 'Email and message are required' });
+        // Send confirmation email
         await transporter.sendMail({
             from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
             to: email,
-            subject: 'Notification from A & K Analytics',
-            html: `<p>${message}</p>`
+            subject: 'Booking Confirmation',
+            html: `
+                <h2>Booking Confirmed!</h2>
+                <p>Dear ${name},</p>
+                <p>Your booking for ${service} on ${date} at ${time} has been received.</p>
+                <p>Status: ${status || 'pending'}</p>
+                <p>We'll notify you once it's confirmed.</p>
+            `
         });
-        const notification = new Notification({ message, date: new Date().toISOString().split('T')[0], email });
+
+        // Create notification
+        const notification = new Notification({
+            message: `Booking for ${service} on ${date} received`,
+            date: new Date().toISOString().split('T')[0],
+            user: req.user._id
+        });
         await notification.save();
-        await new AuditLog({ action: 'send_notification', details: { email, message }, admin: req.user._id }).save();
-        res.json({ success: true });
+        req.user.notifications.push(notification._id);
+        await req.user.save();
+
+        res.status(201).json({ message: 'Booking created successfully', booking });
     } catch (error) {
-        console.error('Error in POST /api/admin/notify:', error.message);
-        res.status(500).json({ error: 'Server error: ' + error.message });
+        console.error('Error in POST /api/bookings:', error.message);
+        res.status(500).json({ error: 'Failed to create booking: ' + error.message });
     }
 });
 
-// Admin Team Management
-app.get('/api/admin/team', adminAuth, async (req, res) => {
+// Get All Bookings (Admin)
+app.get('/api/bookings', adminAuth, async (req, res) => {
     try {
-        const admins = await AdminUser.find();
-        res.json(admins);
+        const bookings = await Booking.find().sort({ createdAt: -1 });
+        res.json(bookings);
     } catch (error) {
-        console.error('Error in GET /api/admin/team:', error.message);
+        console.error('Error in GET /api/bookings:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-app.post('/api/admin/team', adminAuth, async (req, res) => {
+// Update Booking Status (Admin)
+app.patch('/api/bookings/:id', adminAuth, async (req, res) => {
     try {
-        const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const admin = new AdminUser({ email, password: hashedPassword });
-        await admin.save();
-        await new AuditLog({ action: 'create_admin', details: { email }, admin: req.user._id }).save();
-        res.status(201).json(admin);
+        console.log('Received PATCH /api/bookings/:id request');
+        console.log('Booking ID:', req.params.id);
+        console.log('Request body:', req.body);
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required' });
+        }
+        const booking = await Booking.findByIdAndUpdate(
+            req.params.id,
+            { status },
+            { new: true }
+        );
+        if (!booking) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        console.log('Booking updated successfully:', booking);
+
+        // Send status update email
+        await transporter.sendMail({
+            from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
+            to: booking.email,
+            subject: 'Booking Status Update',
+            html: `
+                <h2>Booking Update</h2>
+                <p>Dear ${booking.name},</p>
+                <p>Your booking for ${booking.service} on ${booking.date} at ${booking.time} has been updated.</p>
+                <p>New Status: ${status}</p>
+            `
+        });
+
+        // Create notification
+        const notification = new Notification({
+            message: `Booking status updated to ${status}`,
+            date: new Date().toISOString().split('T')[0],
+            user: booking.user
+        });
+        await notification.save();
+        const user = await User.findById(booking.user);
+        if (user) {
+            user.notifications.push(notification._id);
+            await user.save();
+        }
+
+        res.json({ message: 'Booking status updated', booking });
     } catch (error) {
-        console.error('Error in POST /api/admin/team:', error.message);
+        console.error('Error in PATCH /api/bookings/:id:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-app.delete('/api/admin/team/:id', adminAuth, async (req, res) => {
+// Get All Support Tickets (Admin)
+app.get('/api/support-tickets', adminAuth, async (req, res) => {
     try {
-        const admin = await AdminUser.findByIdAndDelete(req.params.id);
-        if (!admin) return res.status(404).json({ error: 'Admin not found' });
-        await new AuditLog({ action: 'delete_admin', details: { adminId: req.params.id }, admin: req.user._id }).save();
-        res.json({ message: 'Admin deleted' });
+        const tickets = await SupportTicket.find().populate('user').sort({ createdAt: -1 });
+        res.json(tickets);
     } catch (error) {
-        console.error('Error in DELETE /api/admin/team/:id:', error.message);
+        console.error('Error in GET /api/support-tickets:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
 
-// Existing Routes (Unchanged but included for completeness)
-// Root Route
-app.get('/', (req, res) => {
-    res.json({ status: 'Backend is running', version: '1.0.0' });
-});
+// Update Support Ticket Status (Admin)
+app.patch('/api/support-tickets/:id', adminAuth, async (req, res) => {
+    try {
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required' });
+        }
+        const ticket = await SupportTicket.findByIdAndUpdate(
+            req.params.id,
+            { status },
+            { new: true }
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Support ticket not found' });
+        }
 
-// Review Submission, Get Approved Reviews, etc. (Unchanged, included above)
-// User Signup, Login, Profile, Bookings, Support Tickets (Unchanged, included above)
+        // Create notification for the user
+        const notification = new Notification({
+            message: `Support ticket "${ticket.subject}" status updated to ${status}`,
+            date: new Date().toISOString().split('T')[0],
+            user: ticket.user
+        });
+        await notification.save();
+        const user = await User.findById(ticket.user);
+        if (user) {
+            user.notifications.push(notification._id);
+            await user.save();
+        }
+
+        res.json({ message: 'Support ticket status updated', ticket });
+    } catch (error) {
+        console.error('Error in PATCH /api/support-tickets/:id:', error.message);
+        res.status(500).json({ error: 'Server error: ' + error.message });
+    }
+});
 
 // Catch-all route for unmatched routes
 app.use((req, res) => {
