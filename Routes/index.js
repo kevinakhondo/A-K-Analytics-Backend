@@ -1,3 +1,20 @@
+const express = require('express');
+const cors = require('cors');
+const app = express();
+
+// Enable CORS for the frontend origin
+app.use(cors({
+    origin: 'https://akaana.netlify.app', // Allow only this origin
+    credentials: true // Allow cookies/auth headers if needed
+}));
+
+// Middleware for parsing JSON
+app.use(express.json());
+
+// Your existing middleware (e.g., authMiddleware)
+// ...
+
+// Your existing routes, including:
 app.get('/api/users/profile', authMiddleware, async (req, res) => {
     try {
         const user = await User.findById(req.user._id)
@@ -31,4 +48,12 @@ app.get('/api/users/profile', authMiddleware, async (req, res) => {
         console.error('Error in GET /api/users/profile:', error.message);
         res.status(500).json({ error: 'Server error: ' + error.message });
     }
+});
+
+// Other routes (e.g., /api/users/login, /api/users/signup)
+// ...
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
