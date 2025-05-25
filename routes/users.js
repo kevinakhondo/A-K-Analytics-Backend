@@ -16,12 +16,7 @@ const transporter = nodemailer.createTransport({
 
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
-        const user = await User.findById(req.userId)
-            .populate('projects')
-            .populate('bookings')
-            .populate('supportTickets')
-            .populate('invoices')
-            .populate('notifications');
+        const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({ error: 'User not found' });
 
         res.json({
@@ -29,7 +24,7 @@ router.get('/profile', authMiddleware, async (req, res) => {
             email: user.email,
             role: user.role || (user.email === 'kevinakhondo9@gmail.com' ? 'admin' : 'customer'),
             profileCompletion: user.profileCompletion,
-            projects: user.projects || [],
+            projects: [], // Avoid populating unregistered models
             analytics: [
                 {
                     title: 'Sales Forecast Q2',
@@ -37,10 +32,10 @@ router.get('/profile', authMiddleware, async (req, res) => {
                     kpis: 'Accuracy: 93%'
                 }
             ],
-            bookings: user.bookings || [],
-            supportTickets: user.bookings || [],
-            invoices: user.invoices || [],
-            notifications: user.notifications || [],
+            bookings: [],
+            supportTickets: [],
+            invoices: [],
+            notifications: [],
             preferences: {
                 name: user.name,
                 email: user.email,
@@ -59,12 +54,7 @@ router.get('/', authMiddleware, async (req, res) => {
         if (req.user.email !== 'kevinakhondo9@gmail.com') {
             return res.status(403).json({ error: 'Unauthorized: Admin access only' });
         }
-        const users = await User.find()
-            .populate('projects')
-            .populate('bookings')
-            .populate('supportTickets')
-            .populate('invoices')
-            .populate('notifications');
+        const users = await User.find();
         res.json(users);
     } catch (error) {
         console.error('Error in GET /api/users:', error.message);
