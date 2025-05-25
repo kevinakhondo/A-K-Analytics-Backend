@@ -16,31 +16,26 @@ const transporter = nodemailer.createTransport({
 
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
-        const user = await User.findById(req.userId);
+        const user = await User.findById(req.userId).select('-password -verificationToken');
         if (!user) return res.status(404).json({ error: 'User not found' });
 
         res.json({
+            _id: user._id,
             name: user.name,
             email: user.email,
             role: user.role || (user.email === 'kevinakhondo9@gmail.com' ? 'admin' : 'customer'),
-            profileCompletion: user.profileCompletion,
-            projects: [], // Avoid populating unregistered models
-            analytics: [
-                {
-                    title: 'Sales Forecast Q2',
-                    previewUrl: 'https://public.tableau.com/views/SuperstoreOverview/Dashboard1',
-                    kpis: 'Accuracy: 93%'
-                }
-            ],
-            bookings: [],
-            supportTickets: [],
-            invoices: [],
-            notifications: [],
+            profileCompletion: user.profileCompletion || 0,
+            projects: user.projects || [],
+            analytics: [], // To be populated by /api/customer/analytics
+            bookings: user.bookings || [],
+            supportTickets: user.supportTickets || [],
+            invoices: user.invoices || [],
+            notifications: user.notifications || [],
             preferences: {
                 name: user.name,
                 email: user.email,
-                company: user.company,
-                notificationChannels: user.notificationChannels
+                company: user.company || '',
+                notificationChannels: user.notificationChannels || []
             }
         });
     } catch (error) {
@@ -54,7 +49,7 @@ router.get('/', authMiddleware, async (req, res) => {
         if (req.user.email !== 'kevinakhondo9@gmail.com') {
             return res.status(403).json({ error: 'Unauthorized: Admin access only' });
         }
-        const users = await User.find();
+        const users = await User.find().select('-password -verificationToken');
         res.json(users);
     } catch (error) {
         console.error('Error in GET /api/users:', error.message);
@@ -78,7 +73,14 @@ router.post('/signup', async (req, res) => {
             name,
             email,
             password: hashedPassword,
-            verificationToken
+            verificationToken,
+            profileCompletion: 0,
+            projects: [],
+            bookings: [],
+            supportTickets: [],
+            invoices: [],
+            notifications: [],
+            preferences: { notificationChannels: [] }
         });
         await user.save();
 
@@ -156,4 +158,4 @@ router.post('/login', async (req, res) => {
     }
 });
 
-module.exports = router;
+module.exports = router; // Corrected export
