@@ -41,3 +41,5 @@ exports.getAnalytics = async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 };
+
+module.exports = exports;

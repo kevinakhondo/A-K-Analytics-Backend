@@ -2,6 +2,17 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
 
 router.get('/profile', authMiddleware, async (req, res) => {
     try {

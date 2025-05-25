@@ -57,7 +57,7 @@ const UserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     role: { type: String, enum: ['admin', 'customer'], default: 'customer' },
-    dashboardUrl: String, // Added for dashboard
+    dashboardUrl: String,
     isVerified: { type: Boolean, default: false },
     verificationToken: { type: String },
     createdAt: { type: Date, default: Date.now },
@@ -131,7 +131,7 @@ const authMiddleware = async (req, res, next) => {
         const user = await User.findById(decoded.userId);
         if (!user) return res.status(404).json({ error: 'User not found' });
         req.user = user;
-        req.userId = decoded.userId; // For compatibility with users.js
+        req.userId = decoded.userId;
         next();
     } catch (error) {
         console.error('Auth middleware error:', error.message);
