@@ -38,7 +38,7 @@ router.get('/profile', authMiddleware, async (req, res) => {
                 }
             ],
             bookings: user.bookings || [],
-            supportTickets: user.supportTickets || [],
+            supportTickets: user.bookings || [],
             invoices: user.invoices || [],
             notifications: user.notifications || [],
             preferences: {
