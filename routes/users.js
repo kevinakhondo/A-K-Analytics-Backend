@@ -46,29 +46,23 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Email already exists' });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const verificationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1d' });
     const user = new User({
       name,
       email,
       password: hashedPassword,
-      verificationToken,
+      isVerified: true,
     });
     await user.save();
 
-    const verificationUrl = `https://akaana.netlify.app/?verify=${verificationToken}`;
-    await transporter.sendMail({
+    // Welcome email — fire and forget so a misconfigured SMTP doesn't block signup
+    transporter.sendMail({
       from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: 'Verify Your Email',
-      html: `
-        <h2>Welcome to A & K Analytics!</h2>
-        <p>Please verify your email by clicking the link below:</p>
-        <a href="${verificationUrl}" style="padding:10px 20px;background:#00bcd4;color:#fff;text-decoration:none;border-radius:4px;">Verify Email</a>
-        <p>Or copy: ${verificationUrl}</p>
-      `,
-    });
+      subject: 'Welcome to A & K Analytics',
+      html: `<h2>Welcome, ${name}!</h2><p>Your account has been created. You can now <a href="https://akaana.netlify.app/login.html">log in</a>.</p>`,
+    }).catch(err => console.error('Welcome email error:', err.message));
 
-    res.status(201).json({ message: 'User created. Please check your email to verify your account.' });
+    res.status(201).json({ message: 'Account created successfully. You can now log in.' });
   } catch (error) {
     console.error('POST /api/users/signup:', error.message);
     res.status(500).json({ error: 'Server error' });
@@ -98,7 +92,7 @@ router.post('/login', async (req, res) => {
     }
     const user = await User.findOne({ email });
     const isMatch = user && await bcrypt.compare(password, user.password);
-    if (!user || !isMatch || !user.isVerified) {
+    if (!user || !isMatch) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });

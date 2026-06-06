@@ -34,7 +34,7 @@ router.patch('/users/:id', adminAuth, async (req, res) => {
 
 router.get('/bookings', adminAuth, async (req, res) => {
   try {
-    const bookings = await Booking.find().sort({ createdAt: -1 });
+    const bookings = await Booking.find().populate('userId', 'name email').sort({ callTime: -1 });
     res.json(bookings);
   } catch (error) {
     console.error('GET /api/admin/bookings:', error.message);
