@@ -11,8 +11,7 @@ module.exports = async (req, res, next) => {
         req.user = user;
         req.userId = decoded.userId;
         next();
-    } catch (error) {
-        console.error('Auth middleware error:', error.message);
-        res.status(401).json({ error: 'Invalid token: ' + error.message });
+    } catch {
+        res.status(401).json({ error: 'Unauthorized' });
     }
 };
