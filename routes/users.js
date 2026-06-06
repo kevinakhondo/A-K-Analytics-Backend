@@ -59,7 +59,7 @@ router.post('/signup', async (req, res) => {
       from: `"A & K Analytics" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Welcome to A & K Analytics',
-      html: `<h2>Welcome, ${name}!</h2><p>Your account has been created. You can now <a href="https://akaana.netlify.app/login.html">log in</a>.</p>`,
+      html: `<h2>Welcome, ${name}!</h2><p>Your account has been created. You can now <a href="https://magical-moxie-c216f8.netlify.app/login.html">log in</a>.</p>`,
     }).catch(err => console.error('Welcome email error:', err.message));
 
     res.status(201).json({ message: 'Account created successfully. You can now log in.' });
