@@ -75,6 +75,20 @@ router.patch('/bookings/:id', adminAuth, async (req, res) => {
   }
 });
 
+router.delete('/bookings/:id', adminAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndDelete(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    if (booking.userId) {
+      await User.findByIdAndUpdate(booking.userId, { $pull: { bookings: booking._id } });
+    }
+    res.json({ message: 'Booking deleted' });
+  } catch (error) {
+    console.error('DELETE /api/admin/bookings/:id:', error.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/support-tickets', adminAuth, async (req, res) => {
   try {
     const tickets = await SupportTicket.find().populate('user').sort({ createdAt: -1 });
